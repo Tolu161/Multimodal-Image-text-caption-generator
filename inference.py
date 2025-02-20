@@ -114,34 +114,89 @@ def generate_caption(model, image_embedding, processor, max_length=77, min_lengt
 
 def display_results(image, generated_caption, original_caption, save_path=None):
     """Display image with generated and original captions."""
-    # Wrap captions for display
-    wrapped_gen = textwrap.fill(f"Generated: {generated_caption}", width=60)
-    wrapped_orig = textwrap.fill(f"Original: {original_caption}", width=60)
-    
-    # Create figure
     plt.figure(figsize=(12, 8))
+    
+    # Create subplot for the image
+    plt.subplot(1, 1, 1)
     plt.imshow(image)
     plt.axis('off')
     
-    # Add title with captions
+    # Format captions with textwrap
+    wrapped_gen = textwrap.fill(f"Generated: {generated_caption}", width=60)
+    wrapped_orig = textwrap.fill(f"Ground Truth: {original_caption}", width=60)
+    
+    # Add title with both captions
     plt.title(
-        f"{wrapped_gen}\n\n{wrapped_orig}",
+        f"{wrapped_orig}\n\n{wrapped_gen}",
         pad=20,
         fontsize=12,
         wrap=True,
-        y=1.05
+        y=1.05,
+        bbox=dict(
+            facecolor='white',
+            alpha=0.8,
+            edgecolor='gray',
+            boxstyle='round,pad=1'
+        )
     )
     
-    # Adjust layout
+    # Adjust layout to prevent caption cutoff
     plt.tight_layout()
     
     # Save if path provided
     if save_path:
-        plt.savefig(save_path, bbox_inches='tight', dpi=300)
+        plt.savefig(save_path, bbox_inches='tight', dpi=300, facecolor='white')
         print(f"Saved visualization to {save_path}")
     
     plt.show()
     plt.close()
+
+def generate_and_display_batch(model, dataloader, processor, num_images=5, save_dir=None, temperature=1.0):
+    """Generate and display captions for a batch of images."""
+    model.eval()
+    
+    with torch.no_grad():
+        for i, batch in enumerate(dataloader):
+            if i >= num_images:
+                break
+                
+            try:
+                # Get image and embeddings
+                image = batch["image"][0]  # Get first image from batch
+                image_embeddings = batch["image_embedding"][0]  # Remove batch dimension
+                original_caption = batch["caption"][0]
+                
+                # Generate caption
+                generated_caption = generate_caption(
+                    model,
+                    image_embeddings,
+                    processor,
+                    temperature=temperature
+                )
+                
+                # Create save path if directory provided
+                save_path = None
+                if save_dir:
+                    os.makedirs(save_dir, exist_ok=True)
+                    save_path = os.path.join(save_dir, f"sample_{i+1}.png")
+                
+                # Display results
+                display_results(
+                    image,
+                    generated_caption,
+                    original_caption,
+                    save_path=save_path
+                )
+                
+                # Print comparison
+                print(f"\nImage {i+1}:")
+                print(f"Ground Truth: {original_caption}")
+                print(f"Generated  : {generated_caption}")
+                print("-" * 80)
+                
+            except Exception as e:
+                print(f"Error processing image {i+1}: {str(e)}")
+                continue
 
 def save_weights(model, save_dir="saved_weights", filename="model_weights.pt"):
     """Save model weights to specified directory."""
@@ -179,15 +234,11 @@ def main():
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Using device: {device}")
         
-        # Initialize model
-        print("\nInitializing model...")
-        model = Decoder().to(device)
-        
-        # Load checkpoint if provided
-        if args.checkpoint:
-            if not os.path.exists(args.checkpoint):
-                raise FileNotFoundError(f"Checkpoint file not found: {args.checkpoint}")
-            model = load_model(args.checkpoint, device)
+        # Load model and checkpoint
+        if not args.checkpoint:
+            raise ValueError("Please provide a checkpoint path using --checkpoint")
+            
+        model = load_model(args.checkpoint, device)
         
         # Save weights if requested
         if args.save_weights:
@@ -199,53 +250,22 @@ def main():
         if not args.checkpoint and not args.save_weights:
             raise ValueError("Either --checkpoint or --save-weights must be provided")
         
-        # Create save directory if needed
-        if args.save_dir:
-            os.makedirs(args.save_dir, exist_ok=True)
-        
         # Load validation dataset
         print("\nLoading validation dataset...")
-        val_dataloader = load_flikr_dataset(device, split="val", batch_size=args.batch_size)
+        val_dataloader = load_flikr_dataset(device, split="validation", batch_size=args.batch_size)
         processor = val_dataloader.dataset.processor
         
-        # Generate captions
+        # Generate and display captions
         print("\nGenerating captions...")
-        model.eval()
-        with torch.no_grad():
-            for i, batch in enumerate(tqdm(val_dataloader, desc="Processing images")):
-                if i >= args.num_samples:
-                    break
-                
-                try:
-                    # Get image and embeddings
-                    image = batch["image"][0]  # Get first image from batch
-                    print(f"\nBatch image_embedding shape: {batch['image_embedding'].shape}")
-                    image_embeddings = batch["image_embedding"][0]  # Remove batch dimension
-                    print(f"Selected image_embedding shape: {image_embeddings.shape}")
-                    true_caption = batch["caption"][0]
-                    
-                    # Generate caption
-                    generated_caption = generate_caption(
-                        model, 
-                        image_embeddings,
-                        processor,
-                        temperature=args.temperature
-                    )
-                    
-                    # Display results
-                    save_path = os.path.join(args.save_dir, f"sample_{i+1}.png") if args.save_dir else None
-                    display_results(image, generated_caption, true_caption, save_path)
-                    
-                    # Print captions
-                    print(f"\nImage {i+1}:")
-                    print(f"True caption: {true_caption}")
-                    print(f"Generated caption: {generated_caption}")
-                    print("-" * 80)
-                    
-                except Exception as e:
-                    print(f"\nError processing image {i+1}: {str(e)}")
-                    continue
-                    
+        generate_and_display_batch(
+            model,
+            val_dataloader,
+            processor,
+            num_images=args.num_samples,
+            save_dir=args.save_dir,
+            temperature=args.temperature
+        )
+        
     except Exception as e:
         print(f"\nFatal error: {str(e)}")
         return 1
