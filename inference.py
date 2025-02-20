@@ -41,63 +41,69 @@ def generate_caption(model, image_embedding, processor, max_length=77, min_lengt
     model.eval()
     
     with torch.no_grad():
-        print(f"\nInitial image_embedding shape: {image_embedding.shape}")
-        
-        # Version 1: Simple shape handling (currently using this)
-        # Ensure image_embedding has correct shape [batch_size, hidden_size]
-        if len(image_embedding.shape) == 3:  # [1, 1, hidden_size]
-            print("Case 1: Squeezing dimension 1")
-            image_embedding = image_embedding.squeeze(1)  # Remove middle dimension
-        elif len(image_embedding.shape) == 1:  # [hidden_size]
-            print("Case 2: Adding batch dimension")
-            image_embedding = image_embedding.unsqueeze(0)  # Add batch dimension
+        try:
+            print(f"\nInitial image_embedding shape: {image_embedding.shape}")
             
-        print(f"Final image_embedding shape: {image_embedding.shape}")
-            
-        # Start with empty token sequence
-        input_ids = torch.zeros((1, 1), dtype=torch.long, device=image_embedding.device)
-        
-        # Version 1: Simple attention mask (currently using this)
-        attention_mask = torch.ones_like(input_ids)  # [1, 1]
-        
-        # Version 2: Complex attention mask (commented out for now)
-        # attention_mask = torch.ones((1, 1, 1), dtype=torch.float, device=image_embedding.device)
-        # attention_mask = attention_mask.expand(-1, -1, 2)  # Expand for image token
-        
-        for i in range(max_length - 1):
-            # Version 1: Simple forward pass (currently using this)
-            log_probs = model(image_embedding, input_ids, attention_mask)
-            
-            # Version 2: Complex forward pass (commented out for now)
-            # log_probs = model(image_embedding.unsqueeze(0), input_ids, attention_mask)
-            
-            next_token_logits = log_probs[:, -1, :] / temperature
-            
-            # Prevent EOS before min_length
-            if i < min_length:
-                next_token_logits[0, processor.tokenizer.eos_token_id] = float('-inf')
-            
-            # Sample from the distribution for more diverse captions
-            next_token_probs = torch.softmax(next_token_logits, dim=-1)
-            next_token = torch.multinomial(next_token_probs, num_samples=1)[0]
-            
-            # Stop if EOS token (after min_length)
-            if next_token.item() == processor.tokenizer.eos_token_id:
-                break
+            # Ensure image_embedding has shape [batch_size, hidden_size]
+            if len(image_embedding.shape) == 3:  # [1, 1, hidden_size]
+                image_embedding = image_embedding.squeeze()  # Remove extra dimensions
+                if len(image_embedding.shape) == 1:
+                    image_embedding = image_embedding.unsqueeze(0)  # Add batch dimension back
+            elif len(image_embedding.shape) == 1:  # [hidden_size]
+                image_embedding = image_embedding.unsqueeze(0)  # Add batch dimension
                 
-            # Add token to sequence
-            input_ids = torch.cat([input_ids, next_token.unsqueeze(0).unsqueeze(0)], dim=1)
+            print(f"Final image_embedding shape: {image_embedding.shape}")
+            assert len(image_embedding.shape) == 2, f"Expected 2D tensor, got shape {image_embedding.shape}"
+            assert image_embedding.size(1) == model.hidden_size, \
+                f"Expected hidden size {model.hidden_size}, got {image_embedding.size(1)}"
+                
+            # Start with empty token sequence
+            input_ids = torch.zeros((1, 1), dtype=torch.long, device=image_embedding.device)
             
-            # Version 1: Simple mask update (currently using this)
-            attention_mask = torch.ones_like(input_ids)
+            # Simple padding mask for input tokens
+            padding_mask = torch.ones_like(input_ids, dtype=torch.bool)
             
-            # Version 2: Complex mask update (commented out for now)
-            # seq_length = input_ids.size(1) + 1  # +1 for image token
-            # attention_mask = torch.ones((1, seq_length, seq_length), dtype=torch.float, device=image_embedding.device)
-        
-        # Decode caption
-        caption = processor.tokenizer.decode(input_ids[0], skip_special_tokens=True)
-        return caption
+            generated_tokens = []
+            
+            for i in range(max_length - 1):
+                try:
+                    # Forward pass without explicit attention mask (let model handle it)
+                    log_probs = model(image_embedding, input_ids, padding_mask)
+                    next_token_logits = log_probs[:, -1, :] / temperature
+                    
+                    # Prevent EOS before min_length
+                    if i < min_length:
+                        next_token_logits[0, processor.tokenizer.eos_token_id] = float('-inf')
+                    
+                    # Sample from the distribution for more diverse captions
+                    next_token_probs = torch.softmax(next_token_logits, dim=-1)
+                    next_token = torch.multinomial(next_token_probs, num_samples=1)[0]
+                    
+                    # Stop if EOS token (after min_length)
+                    if next_token.item() == processor.tokenizer.eos_token_id:
+                        break
+                        
+                    generated_tokens.append(next_token.item())
+                    
+                    # Add token to sequence
+                    input_ids = torch.cat([input_ids, next_token.unsqueeze(0).unsqueeze(0)], dim=1)
+                    padding_mask = torch.ones_like(input_ids, dtype=torch.bool)
+                    
+                except RuntimeError as e:
+                    print(f"Error during generation step {i}: {str(e)}")
+                    break
+            
+            # Decode caption, handling empty case
+            if not generated_tokens:
+                return "Failed to generate caption"
+                
+            # Decode caption
+            caption = processor.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+            return caption if caption.strip() else "Failed to generate meaningful caption"
+            
+        except Exception as e:
+            print(f"Error in caption generation: {str(e)}")
+            return "Error generating caption"
 
 def display_results(image, generated_caption, original_caption, save_path=None):
     """Display image with generated and original captions."""
@@ -161,69 +167,83 @@ def main():
     parser.add_argument("--weights-dir", type=str, default="saved_weights", help="Directory to save model weights")
     args = parser.parse_args()
     
-    # Set up device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    try:
+        # Set up device
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Using device: {device}")
+        
+        # Initialize model
+        print("\nInitializing model...")
+        model = Decoder().to(device)
+        
+        # Load checkpoint if provided
+        if args.checkpoint:
+            if not os.path.exists(args.checkpoint):
+                raise FileNotFoundError(f"Checkpoint file not found: {args.checkpoint}")
+            model = load_model(args.checkpoint, device)
+        
+        # Save weights if requested
+        if args.save_weights:
+            weights_path = save_weights(model, args.weights_dir)
+            if not args.checkpoint:  # If no checkpoint was loaded, use the saved weights
+                args.checkpoint = weights_path
+        
+        # Ensure we have weights to use
+        if not args.checkpoint and not args.save_weights:
+            raise ValueError("Either --checkpoint or --save-weights must be provided")
+        
+        # Create save directory if needed
+        if args.save_dir:
+            os.makedirs(args.save_dir, exist_ok=True)
+        
+        # Load validation dataset
+        print("\nLoading validation dataset...")
+        val_dataloader = load_flikr_dataset(device, split="val", batch_size=args.batch_size)
+        processor = val_dataloader.dataset.processor
+        
+        # Generate captions
+        print("\nGenerating captions...")
+        model.eval()
+        with torch.no_grad():
+            for i, batch in enumerate(tqdm(val_dataloader, desc="Processing images")):
+                if i >= args.num_samples:
+                    break
+                
+                try:
+                    # Get image and embeddings
+                    image = batch["image"][0]  # Get first image from batch
+                    print(f"\nBatch image_embedding shape: {batch['image_embedding'].shape}")
+                    image_embeddings = batch["image_embedding"][0]  # Remove batch dimension
+                    print(f"Selected image_embedding shape: {image_embeddings.shape}")
+                    true_caption = batch["caption"][0]
+                    
+                    # Generate caption
+                    generated_caption = generate_caption(
+                        model, 
+                        image_embeddings,
+                        processor,
+                        temperature=args.temperature
+                    )
+                    
+                    # Display results
+                    save_path = os.path.join(args.save_dir, f"sample_{i+1}.png") if args.save_dir else None
+                    display_results(image, generated_caption, true_caption, save_path)
+                    
+                    # Print captions
+                    print(f"\nImage {i+1}:")
+                    print(f"True caption: {true_caption}")
+                    print(f"Generated caption: {generated_caption}")
+                    print("-" * 80)
+                    
+                except Exception as e:
+                    print(f"\nError processing image {i+1}: {str(e)}")
+                    continue
+                    
+    except Exception as e:
+        print(f"\nFatal error: {str(e)}")
+        return 1
     
-    # Initialize model
-    print("\nInitializing model...")
-    model = Decoder().to(device)
-    
-    # Load checkpoint if provided
-    if args.checkpoint:
-        model = load_model(args.checkpoint, device)
-    
-    # Save weights if requested
-    if args.save_weights:
-        weights_path = save_weights(model, args.weights_dir)
-        if not args.checkpoint:  # If no checkpoint was loaded, use the saved weights
-            args.checkpoint = weights_path
-    
-    # Ensure we have weights to use
-    if not args.checkpoint and not args.save_weights:
-        raise ValueError("Either --checkpoint or --save-weights must be provided")
-    
-    # Create save directory if needed
-    if args.save_dir:
-        os.makedirs(args.save_dir, exist_ok=True)
-    
-    # Load validation dataset
-    print("\nLoading validation dataset...")
-    val_dataloader = load_flikr_dataset(device, split="val", batch_size=args.batch_size)
-    processor = val_dataloader.dataset.processor
-    
-    # Generate captions
-    print("\nGenerating captions...")
-    model.eval()
-    with torch.no_grad():
-        for i, batch in enumerate(tqdm(val_dataloader, desc="Processing images")):
-            if i >= args.num_samples:
-                break
-            
-            # Get image and embeddings
-            image = batch["image"][0]  # Get first image from batch
-            print(f"\nBatch image_embedding shape: {batch['image_embedding'].shape}")
-            image_embeddings = batch["image_embedding"][0]  # Remove batch dimension
-            print(f"Selected image_embedding shape: {image_embeddings.shape}")
-            true_caption = batch["caption"][0]
-            
-            # Generate caption
-            generated_caption = generate_caption(
-                model, 
-                image_embeddings,  # Pass without extra unsqueeze
-                processor,
-                temperature=args.temperature
-            )
-            
-            # Display results
-            save_path = os.path.join(args.save_dir, f"sample_{i+1}.png") if args.save_dir else None
-            display_results(image, generated_caption, true_caption, save_path)
-            
-            # Print captions
-            print(f"\nImage {i+1}:")
-            print(f"True caption: {true_caption}")
-            print(f"Generated caption: {generated_caption}")
-            print("-" * 80)
+    return 0
 
 if __name__ == "__main__":
     main()
