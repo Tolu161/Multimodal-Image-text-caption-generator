@@ -28,16 +28,21 @@ class ResidualAttentionBlock(nn.Module):
         assert hidden_size == self.d_model, \
             f"Input hidden size {hidden_size} doesn't match layer's d_model {self.d_model}"
         
-        if attention_mask is not None:
-            # PyTorch expects attention_mask to be additive (0 for attention, -inf for no attention)
-            attention_mask = attention_mask.float()
-            attention_mask = attention_mask.masked_fill(attention_mask == 0, float('-inf'))
-            attention_mask = attention_mask.masked_fill(attention_mask == 1, 0.0)
-        
         # Attention with residual
         residual = x
         x = self.attn_norm(x)
-        attn_out, _ = self.attn(x, x, x, attn_mask=attention_mask, need_weights=False)
+        
+        # Handle attention mask for PyTorch's MultiheadAttention
+        if attention_mask is not None:
+            # Convert mask to float and proper format
+            attention_mask = attention_mask.float()
+            # Create additive attention mask (0 for attention, -inf for masking)
+            attention_mask = attention_mask.masked_fill(attention_mask == 0, float('-inf'))
+            attention_mask = attention_mask.masked_fill(attention_mask == 1, 0.0)
+            # Ensure mask is 2D for PyTorch's MultiheadAttention
+            attention_mask = attention_mask[:, None, :]  # [batch_size, 1, seq_length]
+        
+        attn_out, _ = self.attn(x, x, x, key_padding_mask=attention_mask, need_weights=False)
         x = residual + attn_out
         
         # FF with residual
@@ -137,22 +142,17 @@ class Decoder(nn.Module):
         assert sequence.size() == (batch_size, seq_length_with_image, self.hidden_size), \
             f"Sequence shape mismatch after concatenation: expected ({batch_size}, {seq_length_with_image}, {self.hidden_size}), got {sequence.size()}"
         
-        # Create causal mask for the sequence including image token
-        causal_mask = self.causal_mask[:seq_length_with_image, :seq_length_with_image].unsqueeze(0)
-        causal_mask = causal_mask.expand(batch_size, -1, -1)
-        
+        # Create attention mask including image token
         if attention_mask is not None:
-            # Add attention for image token (keep as float)
+            # Add attention for image token
             image_attention = torch.ones((batch_size, 1), device=attention_mask.device)
             attention_mask = torch.cat([image_attention, attention_mask], dim=1)
-            
-            # Create combined mask (keeping float values)
-            mask = causal_mask * attention_mask.unsqueeze(1)
         else:
-            mask = causal_mask
+            attention_mask = torch.ones((batch_size, seq_length_with_image), device=input_ids.device)
         
-        assert mask.size() == (batch_size, seq_length_with_image, seq_length_with_image), \
-            f"Final attention mask shape mismatch: expected ({batch_size}, {seq_length_with_image}, {seq_length_with_image}), got {mask.size()}"
+        # Apply causal masking
+        causal = self.causal_mask[:seq_length_with_image, :seq_length_with_image]
+        mask = attention_mask.unsqueeze(1) * causal.unsqueeze(0)
         
         # Process through transformer layers
         for i, layer in enumerate(self.layers):
