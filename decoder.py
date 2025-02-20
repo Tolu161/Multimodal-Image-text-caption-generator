@@ -151,7 +151,7 @@ class Decoder(nn.Module):
 
         # Apply causal masking to attention mask
         causal = self.causal_mask[:seq_length_with_image, :seq_length_with_image]  # [seq_length_with_image, seq_length_with_image]
-        attention_mask = attention_mask * causal  # [batch_size, seq_length_with_image]
+        attention_mask = attention_mask * causal.unsqueeze(0)  # [batch_size, seq_length_with_image]
         
         # Process through transformer layers
         for layer in self.layers:
