@@ -7,11 +7,13 @@ import warnings
 import matplotlib.pyplot as plt
 import textwrap
 from transformers import CLIPProcessor
+from tqdm import tqdm
 
 warnings.simplefilter("ignore", category=FutureWarning)
 
 def load_model(checkpoint_path, device):
     """Load model from checkpoint."""
+    print(f"\nLoading model from {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location=device)
     
     # Initialize model with saved configuration
@@ -24,29 +26,17 @@ def load_model(checkpoint_path, device):
     })
     
     model = Decoder(**config).to(device)
-    model.load_state_dict(checkpoint["model_state_dict"])
+    
+    # Load state dict
+    if 'model_state_dict' in checkpoint:
+        model.load_state_dict(checkpoint['model_state_dict'])
+    else:
+        model.load_state_dict(checkpoint)  # Assume it's just the state dict
+        
+    print("Model loaded successfully")
     return model
 
-def save_current_weights(model, save_dir="saved_weights"):
-    """Save the current model weights."""
-    os.makedirs(save_dir, exist_ok=True)
-    save_path = os.path.join(save_dir, "model_weights.pt")
-    
-    # Save only the model state dict
-    torch.save(model.state_dict(), save_path)
-    print(f"\nModel weights saved to: {save_path}")
-    return save_path
-
-def load_weights(model, weights_path):
-    """Load weights into the model."""
-    if os.path.exists(weights_path):
-        print(f"\nLoading weights from: {weights_path}")
-        model.load_state_dict(torch.load(weights_path))
-        print("Weights loaded successfully")
-    else:
-        raise FileNotFoundError(f"No weights file found at {weights_path}")
-
-def generate_caption(model, image_embedding, processor, max_length=77, min_length=5):
+def generate_caption(model, image_embedding, processor, max_length=77, min_length=5, temperature=1.0):
     """Generate a caption for an image."""
     model.eval()
     
@@ -58,14 +48,15 @@ def generate_caption(model, image_embedding, processor, max_length=77, min_lengt
         for i in range(max_length - 1):
             # Get model predictions
             log_probs = model(image_embedding, input_ids, attention_mask)
-            next_token_logits = log_probs[:, -1, :]
+            next_token_logits = log_probs[:, -1, :] / temperature
             
             # Prevent EOS before min_length
             if i < min_length:
                 next_token_logits[0, processor.tokenizer.eos_token_id] = float('-inf')
             
-            # Get next token
-            next_token = torch.argmax(next_token_logits, dim=-1)
+            # Sample from the distribution for more diverse captions
+            next_token_probs = torch.softmax(next_token_logits, dim=-1)
+            next_token = torch.multinomial(next_token_probs, num_samples=1)[0]
             
             # Stop if EOS token (after min_length)
             if next_token.item() == processor.tokenizer.eos_token_id:
@@ -79,14 +70,14 @@ def generate_caption(model, image_embedding, processor, max_length=77, min_lengt
         caption = processor.tokenizer.decode(input_ids[0], skip_special_tokens=True)
         return caption
 
-def display_results(image, generated_caption, original_caption):
+def display_results(image, generated_caption, original_caption, save_path=None):
     """Display image with generated and original captions."""
     # Wrap captions for display
     wrapped_gen = textwrap.fill(f"Generated: {generated_caption}", width=60)
     wrapped_orig = textwrap.fill(f"Original: {original_caption}", width=60)
     
     # Create figure
-    plt.figure(figsize=(10, 10))
+    plt.figure(figsize=(12, 8))
     plt.imshow(image)
     plt.axis('off')
     
@@ -94,72 +85,103 @@ def display_results(image, generated_caption, original_caption):
     plt.title(
         f"{wrapped_gen}\n\n{wrapped_orig}",
         pad=20,
-        fontsize=10,
+        fontsize=12,
         wrap=True,
         y=1.05
     )
     
     # Adjust layout
-    plt.subplots_adjust(top=0.85)
+    plt.tight_layout()
+    
+    # Save if path provided
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight', dpi=300)
+        print(f"Saved visualization to {save_path}")
+    
     plt.show()
+    plt.close()
 
-def main(weights_path=None, save_weights=True):
+def save_weights(model, save_dir="saved_weights", filename="model_weights.pt"):
+    """Save model weights to specified directory."""
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, filename)
+    
+    # Save model state dict
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'config': {
+            'n_head': model.layers[0].n_head,
+            'n_inner': model.layers[0].d_model * 4,
+            'clip_embedding_dim': model.hidden_size,
+            'max_seq_length': model.token_embedding.num_embeddings,
+            'dropout': model.embed_dropout.p
+        }
+    }, save_path)
+    
+    print(f"\nModel weights saved to: {save_path}")
+    return save_path
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate captions for images using trained model")
+    parser.add_argument("--checkpoint", type=str, required=True, help="Path to model checkpoint")
+    parser.add_argument("--num-samples", type=int, default=5, help="Number of samples to generate captions for")
+    parser.add_argument("--temperature", type=float, default=1.0, help="Sampling temperature (higher = more diverse)")
+    parser.add_argument("--save-dir", type=str, help="Directory to save visualizations")
+    parser.add_argument("--batch-size", type=int, default=1, help="Batch size for processing")
+    parser.add_argument("--save-weights", action="store_true", help="Save model weights separately")
+    parser.add_argument("--weights-dir", type=str, default="saved_weights", help="Directory to save model weights")
+    args = parser.parse_args()
+    
     # Set up device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
-    # Load validation dataset (for testing)
+    # Load model
+    model = load_model(args.checkpoint, device)
+    
+    # Save weights if requested
+    if args.save_weights:
+        save_weights(model, args.weights_dir)
+    
+    # Create save directory if needed
+    if args.save_dir:
+        os.makedirs(args.save_dir, exist_ok=True)
+    
+    # Load validation dataset
     print("\nLoading validation dataset...")
-    val_dataloader = load_flikr_dataset(device, split="val", batch_size=1)
-    
-    # Initialize model
-    print("\nInitializing model...")
-    model = Decoder().to(device)
-    
-    # Save current weights if requested
-    if save_weights and weights_path is None:
-        weights_path = save_current_weights(model)
-    
-    # Load weights if path is provided
-    if weights_path:
-        load_weights(model, weights_path)
-    
-    # Get processor from dataloader for tokenization
+    val_dataloader = load_flikr_dataset(device, split="val", batch_size=args.batch_size)
     processor = val_dataloader.dataset.processor
     
-    # Generate captions for a few validation images
+    # Generate captions
     print("\nGenerating captions...")
-    num_samples = 5
-    for i, batch in enumerate(val_dataloader):
-        if i >= num_samples:
-            break
+    model.eval()
+    with torch.no_grad():
+        for i, batch in enumerate(tqdm(val_dataloader, desc="Processing images")):
+            if i >= args.num_samples:
+                break
             
-        # Get image and embeddings
-        image = batch["image"]
-        image_embeddings = batch["image_embedding"][0]  # [512]
-        image_embeddings = image_embeddings.unsqueeze(0)  # [1, 512]
-        
-        # Get true caption
-        true_caption = processor.tokenizer.decode(
-            batch["input_ids"][0],
-            skip_special_tokens=True
-        )
-        
-        # Generate caption
-        generated_caption = generate_caption(model, image_embeddings, processor)
-        
-        print(f"\nImage {i+1}:")
-        print(f"True caption: {true_caption}")
-        print(f"Generated caption: {generated_caption}")
-        
-        # Display results
-        display_results(image[0], generated_caption, true_caption)
+            # Get image and embeddings
+            image = batch["image"][0]  # Get first image from batch
+            image_embeddings = batch["image_embedding"][0].unsqueeze(0)  # [1, 512]
+            true_caption = batch["caption"][0]
+            
+            # Generate caption
+            generated_caption = generate_caption(
+                model, 
+                image_embeddings, 
+                processor,
+                temperature=args.temperature
+            )
+            
+            # Display results
+            save_path = os.path.join(args.save_dir, f"sample_{i+1}.png") if args.save_dir else None
+            display_results(image, generated_caption, true_caption, save_path)
+            
+            # Print captions
+            print(f"\nImage {i+1}:")
+            print(f"True caption: {true_caption}")
+            print(f"Generated caption: {generated_caption}")
+            print("-" * 80)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--weights", type=str, help="Path to model weights")
-    parser.add_argument("--save-weights", action="store_true", help="Save current weights before inference")
-    parser.add_argument("--num-samples", type=int, default=5, help="Number of samples to generate captions for")
-    args = parser.parse_args()
-    
-    main(weights_path=args.weights, save_weights=args.save_weights)
+    main()

@@ -9,11 +9,9 @@ from transformers import CLIPProcessor, CLIPModel
 
 def collate_fn(batch):
     """Custom collate function to properly stack the batch items."""
-    # Ensure all tensors have the same shape
-    for key in batch[0].keys():
-        shapes = [item[key].shape for item in batch]
-        if not all(shape == shapes[0] for shape in shapes):
-            raise ValueError(f"Inconsistent shapes for {key}: {shapes}")
+    # Handle non-tensor items separately
+    images = [item["image"] for item in batch]
+    captions = [item["caption"] for item in batch]
     
     # Stack all tensors in the batch
     stacked = {
@@ -23,22 +21,15 @@ def collate_fn(batch):
         "labels": torch.stack([item["labels"] for item in batch])  # [batch_size, seq_len]
     }
     
+    # Add non-tensor items
+    stacked["image"] = images
+    stacked["caption"] = captions
+    
     # Print shapes for debugging
     for key, value in stacked.items():
-        print(f"Collated {key} shape: {value.shape}")
+        if isinstance(value, torch.Tensor):
+            print(f"Collated {key} shape: {value.shape}")
     
-    # Verify final shapes
-    batch_size = len(batch)
-    expected_shapes = {
-        "image_embedding": (batch_size, 512),  # CLIP embedding dimension
-        "input_ids": (batch_size, 77),  # max_length
-        "attention_mask": (batch_size, 77),  # max_length
-        "labels": (batch_size, 77)  # max_length
-    }
-    
-    for key, expected_shape in expected_shapes.items():
-        assert stacked[key].shape == expected_shape, f"Wrong shape for {key}: {stacked[key].shape} != {expected_shape}"
-        
     return stacked
 
 
@@ -106,10 +97,12 @@ class Flickr30kDataset(Dataset):  # Now inherits from torch.utils.data.Dataset
         assert labels.shape[0] == self.max_length, f"labels shape {labels.shape} != {self.max_length}"
         
         return {
+            "image": image,  # Original PIL image
             "image_embedding": image_embeddings,  # [embed_dim]
             "input_ids": input_ids,  # [max_length]
             "attention_mask": attention_mask,  # [max_length]
-            "labels": labels  # [max_length]
+            "labels": labels,  # [max_length]
+            "caption": caption  # Original caption string
         }
 
 

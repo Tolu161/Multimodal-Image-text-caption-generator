@@ -269,7 +269,11 @@ def train(
             })
             
             if use_wandb:
-                logger.log_epoch_metrics(avg_train_loss, avg_val_loss, current_epoch)
+                logger.log_epoch_metrics(
+                    train_loss=avg_train_loss,
+                    val_loss=avg_val_loss,
+                    epoch=current_epoch
+                )
 
             # Save best model and check for early stopping
             if avg_val_loss < best_val_loss:
@@ -279,9 +283,10 @@ def train(
                 no_improvement = 0
             else:
                 no_improvement += 1
-                if no_improvement >= early_stopping_patience:
-                    print(f"\nNo improvement for {early_stopping_patience} epochs. Early stopping...")
-                    break
+            
+            if no_improvement >= early_stopping_patience:
+                print(f"\nNo improvement for {early_stopping_patience} epochs. Early stopping...")
+                break
         else:
             print(f"\nNo valid validation batches in epoch {current_epoch}. Skipping metrics...")
 
