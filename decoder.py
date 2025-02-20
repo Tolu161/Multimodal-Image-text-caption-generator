@@ -34,15 +34,12 @@ class ResidualAttentionBlock(nn.Module):
         
         # Handle attention mask for PyTorch's MultiheadAttention
         if attention_mask is not None:
-            # Convert mask to float and proper format
+            # Convert mask to float and proper format for attn_mask
             attention_mask = attention_mask.float()
-            # Create additive attention mask (0 for attention, -inf for masking)
             attention_mask = attention_mask.masked_fill(attention_mask == 0, float('-inf'))
             attention_mask = attention_mask.masked_fill(attention_mask == 1, 0.0)
-            # Ensure mask is 2D for PyTorch's MultiheadAttention
-            attention_mask = attention_mask[:, None, :]  # [batch_size, 1, seq_length]
         
-        attn_out, _ = self.attn(x, x, x, key_padding_mask=attention_mask, need_weights=False)
+        attn_out, _ = self.attn(x, x, x, attn_mask=attention_mask, need_weights=False)
         x = residual + attn_out
         
         # FF with residual
@@ -121,26 +118,16 @@ class Decoder(nn.Module):
         residual = image_embeddings  # [batch_size, hidden_size]
         image_embeddings = self.image_norm(image_embeddings)
         image_embeddings = residual + self.image_projection(image_embeddings)
-        assert image_embeddings.size() == (batch_size, self.hidden_size), \
-            f"Image projection output shape mismatch: expected ({batch_size}, {self.hidden_size}), got {image_embeddings.size()}"
         
         # Get token embeddings and add positional embeddings with dropout
         token_embeddings = self.token_embedding(input_ids)  # [batch_size, seq_length, hidden_size]
-        assert token_embeddings.size() == (batch_size, seq_length, self.hidden_size), \
-            f"Token embeddings shape mismatch: expected ({batch_size}, {seq_length}, {self.hidden_size}), got {token_embeddings.size()}"
-        
         positions = torch.arange(seq_length, device=input_ids.device)
         pos_embeddings = self.pos_embedding(positions)  # [seq_length, hidden_size]
-        assert pos_embeddings.size() == (seq_length, self.hidden_size), \
-            f"Position embeddings shape mismatch: expected ({seq_length}, {self.hidden_size}), got {pos_embeddings.size()}"
-        
         token_embeddings = self.embed_dropout(token_embeddings + pos_embeddings.unsqueeze(0))
         
         # Concatenate image and text embeddings
         sequence = torch.cat([image_embeddings.unsqueeze(1), token_embeddings], dim=1)
         seq_length_with_image = seq_length + 1
-        assert sequence.size() == (batch_size, seq_length_with_image, self.hidden_size), \
-            f"Sequence shape mismatch after concatenation: expected ({batch_size}, {seq_length_with_image}, {self.hidden_size}), got {sequence.size()}"
         
         # Create attention mask including image token
         if attention_mask is not None:
@@ -150,27 +137,23 @@ class Decoder(nn.Module):
         else:
             attention_mask = torch.ones((batch_size, seq_length_with_image), device=input_ids.device)
         
-        # Apply causal masking
+        # Create causal attention mask
         causal = self.causal_mask[:seq_length_with_image, :seq_length_with_image]
-        mask = attention_mask.unsqueeze(1) * causal.unsqueeze(0)
+        # Create attention mask that combines padding and causality
+        # Shape will be [batch_size, seq_length_with_image, seq_length_with_image]
+        mask = attention_mask.unsqueeze(1).expand(-1, seq_length_with_image, -1)
+        mask = mask * causal.unsqueeze(0)
         
         # Process through transformer layers
-        for i, layer in enumerate(self.layers):
+        for layer in self.layers:
             sequence = layer(sequence, attention_mask=mask)
-            assert sequence.size() == (batch_size, seq_length_with_image, self.hidden_size), \
-                f"Layer {i} output shape mismatch: expected ({batch_size}, {seq_length_with_image}, {self.hidden_size}), got {sequence.size()}"
         
         # Final normalization
         sequence = self.final_norm(sequence)
         
         # Get text sequence and compute logits
         text_sequence = sequence[:, 1:, :]  # Remove image token
-        assert text_sequence.size() == (batch_size, seq_length, self.hidden_size), \
-            f"Text sequence shape mismatch: expected ({batch_size}, {seq_length}, {self.hidden_size}), got {text_sequence.size()}"
-        
         logits = self.lm_head(text_sequence)
-        assert logits.size() == (batch_size, seq_length, self.token_embedding.num_embeddings), \
-            f"Logits shape mismatch: expected ({batch_size}, {seq_length}, {self.token_embedding.num_embeddings}), got {logits.size()}"
         
         # Return log probabilities
         return torch.log_softmax(logits.float(), dim=-1)
