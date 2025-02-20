@@ -18,7 +18,7 @@ def load_model(checkpoint_path, device):
     
     # Initialize model with saved configuration
     config = checkpoint.get('config', {
-        'n_head': 4,
+        'n_head': 1,
         'n_inner': 1024,
         'clip_embedding_dim': 512,
         'max_seq_length': 77,
@@ -59,7 +59,16 @@ def generate_caption(model, image_embedding, processor, max_length=77, min_lengt
                 
             # Start with BOS token
             input_ids = torch.tensor([[processor.tokenizer.bos_token_id]], dtype=torch.long, device=image_embedding.device)
-            attention_mask = torch.ones_like(input_ids, dtype=torch.float)
+            
+            # Create causal attention mask
+            seq_length = 1  # Start with length 1 (BOS token)
+            attention_mask = torch.ones((1, seq_length), dtype=torch.float, device=image_embedding.device)
+            
+            # Create causal mask for self-attention
+            causal_mask = torch.tril(torch.ones((seq_length, seq_length), device=image_embedding.device))
+            
+            # Combine attention mask with causal mask
+            attention_mask = attention_mask.unsqueeze(1) * causal_mask.unsqueeze(0)
             
             generated_tokens = []
             
@@ -85,7 +94,12 @@ def generate_caption(model, image_embedding, processor, max_length=77, min_lengt
                     
                     # Add token to sequence
                     input_ids = torch.cat([input_ids, next_token.unsqueeze(0).unsqueeze(0)], dim=1)
-                    attention_mask = torch.ones_like(input_ids, dtype=torch.float)
+                    
+                    # Update attention mask for new sequence length
+                    seq_length = input_ids.size(1)
+                    attention_mask = torch.ones((1, seq_length), dtype=torch.float, device=image_embedding.device)
+                    causal_mask = torch.tril(torch.ones((seq_length, seq_length), device=image_embedding.device))
+                    attention_mask = attention_mask.unsqueeze(1) * causal_mask.unsqueeze(0)
                     
                 except RuntimeError as e:
                     print(f"Error during generation step {i}: {str(e)}")
