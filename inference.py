@@ -60,13 +60,8 @@ def generate_caption(model, image_embedding, processor, max_length=77, min_lengt
             # Start with empty token sequence
             input_ids = torch.zeros((1, 1), dtype=torch.long, device=image_embedding.device)
             
-            # Create initial attention mask for the first token
-            batch_size = 1
-            n_heads = model.layers[0].n_head  # Get number of attention heads from model
-            seq_length = 2  # Image token + first text token
-            
-            # Initialize attention mask with proper shape for multiple heads
-            attention_mask = torch.ones((batch_size, seq_length), dtype=torch.bool, device=image_embedding.device)
+            # Initialize attention mask to match input_ids shape
+            attention_mask = torch.ones_like(input_ids, dtype=torch.float)
             
             generated_tokens = []
             
@@ -93,9 +88,8 @@ def generate_caption(model, image_embedding, processor, max_length=77, min_lengt
                     # Add token to sequence
                     input_ids = torch.cat([input_ids, next_token.unsqueeze(0).unsqueeze(0)], dim=1)
                     
-                    # Update attention mask for new sequence length
-                    seq_length = input_ids.size(1) + 1  # Add 1 for image token
-                    attention_mask = torch.ones((batch_size, seq_length), dtype=torch.bool, device=image_embedding.device)
+                    # Update attention mask to match input_ids shape
+                    attention_mask = torch.ones_like(input_ids, dtype=torch.float)
                     
                 except RuntimeError as e:
                     print(f"Error during generation step {i}: {str(e)}")
