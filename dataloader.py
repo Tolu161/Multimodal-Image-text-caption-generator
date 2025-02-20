@@ -109,15 +109,44 @@ class Flickr30kDataset(Dataset):  # Now inherits from torch.utils.data.Dataset
 #openai.api_key = os.getenv("OPENAI_API_KEY")
 
 
-def load_flikr_dataset(device, split="train", batch_size=32, train_ratio=0.8, seed=42):
-    """Load and prepare the Flickr30k dataset."""
-    # Load dataset with appropriate split
-    if split == "train":
-        f_dataset = load_dataset("nlphuji/flickr30k", split="train")
-    else:
-        f_dataset = load_dataset("nlphuji/flickr30k", split="validation")
+def load_flikr_dataset(device, split="train", batch_size=32, train_ratio=0.8, val_ratio=0.1, seed=42):
+    """Load and prepare the Flickr30k dataset.
+    Args:
+        device: The device to load the data on
+        split: One of 'train', 'validation', or 'test'
+        batch_size: Batch size for the dataloader
+        train_ratio: Ratio of data to use for training (default 0.8)
+        val_ratio: Ratio of data to use for validation (default 0.1)
+        seed: Random seed for reproducibility
+    """
+    # Load the full dataset
+    full_dataset = load_dataset("nlphuji/flickr30k", split="test")
+    print(f"\nLoaded full dataset with {len(full_dataset)} samples")
     
-    print(f"\nLoaded {len(f_dataset)} samples for {split} split")
+    # Calculate split sizes
+    total_size = len(full_dataset)
+    train_size = int(total_size * train_ratio)
+    val_size = int(total_size * val_ratio)
+    test_size = total_size - train_size - val_size
+    
+    # Set random seed for reproducibility
+    torch.manual_seed(seed)
+    
+    # Shuffle and split the dataset
+    shuffled_indices = torch.randperm(total_size)
+    
+    if split == "train":
+        indices = shuffled_indices[:train_size]
+        print(f"Using {len(indices)} samples for training")
+        dataset = full_dataset.select(indices.tolist())
+    elif split == "validation":
+        indices = shuffled_indices[train_size:train_size + val_size]
+        print(f"Using {len(indices)} samples for validation")
+        dataset = full_dataset.select(indices.tolist())
+    else:  # test
+        indices = shuffled_indices[train_size + val_size:]
+        print(f"Using {len(indices)} samples for testing")
+        dataset = full_dataset.select(indices.tolist())
     
     # Load CLIP model and processor
     model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
@@ -125,7 +154,7 @@ def load_flikr_dataset(device, split="train", batch_size=32, train_ratio=0.8, se
     
     # Create dataset instance
     flickr_dataset = Flickr30kDataset(
-        dataset=f_dataset,
+        dataset=dataset,
         processor=processor,
         model=model,
         device=device,
@@ -171,24 +200,26 @@ if __name__ == "__main__":
 
     # New detailed verification code
     print("\nRunning detailed dataset verification...")
-    for split in ["train", "validation"]:
+    
+    # First, verify the raw dataset
+    print("\nVerifying raw dataset...")
+    raw_dataset = load_dataset("nlphuji/flickr30k", split="test")
+    print(f"Total dataset size: {len(raw_dataset)}")
+    
+    # Show example from raw dataset
+    print("\nExample from raw dataset:")
+    example = raw_dataset[0]
+    print(f"Number of captions: {len(example['caption'])}")
+    print("Captions:")
+    for i, cap in enumerate(example['caption'], 1):
+        print(f"{i}. {cap}")
+    
+    # Now test our split functionality
+    print("\nTesting dataset splits...")
+    for split in ["train", "validation", "test"]:
         print(f"\n{'='*50}")
         print(f"Testing {split} split:")
         print('='*50)
-        
-        # Load dataset directly to inspect raw data
-        raw_dataset = load_dataset("nlphuji/flickr30k", split=split)
-        print(f"\nRaw dataset size: {len(raw_dataset)}")
-        
-        # Print first few raw examples
-        print("\nFirst 3 raw examples:")
-        for i in range(min(3, len(raw_dataset))):
-            item = raw_dataset[i]
-            print(f"\nImage {i+1}:")
-            print(f"Number of captions: {len(item['caption'])}")
-            print("Captions:")
-            for j, cap in enumerate(item['caption'], 1):
-                print(f"{j}. {cap}")
         
         # Test dataloader
         print(f"\nTesting dataloader for {split} split...")
