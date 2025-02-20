@@ -144,10 +144,14 @@ class Decoder(nn.Module):
         else:
             attention_mask = torch.ones((batch_size, seq_length_with_image), device=input_ids.device)
         
+        # Apply causal masking to attention mask - this is not needed as we are using key_padding_mask
+        #causal = self.causal_mask[:seq_length_with_image, :seq_length_with_image]
+        #attention_mask = attention_mask.unsqueeze(1) * causal.unsqueeze(0)
+        #attention_mask = attention_mask.squeeze(1)  # [batch_size, seq_length_with_image]
+
         # Apply causal masking to attention mask
-        causal = self.causal_mask[:seq_length_with_image, :seq_length_with_image]
-        attention_mask = attention_mask.unsqueeze(1) * causal.unsqueeze(0)
-        attention_mask = attention_mask.squeeze(1)  # [batch_size, seq_length_with_image]
+        causal = self.causal_mask[:seq_length_with_image, :seq_length_with_image]  # [seq_length_with_image, seq_length_with_image]
+        attention_mask = attention_mask * causal  # [batch_size, seq_length_with_image]
         
         # Process through transformer layers
         for layer in self.layers:
