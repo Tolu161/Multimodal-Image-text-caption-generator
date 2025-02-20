@@ -123,12 +123,12 @@ def save_weights(model, save_dir="saved_weights", filename="model_weights.pt"):
 
 def main():
     parser = argparse.ArgumentParser(description="Generate captions for images using trained model")
-    parser.add_argument("--checkpoint", type=str, required=True, help="Path to model checkpoint")
+    parser.add_argument("--checkpoint", type=str, help="Path to model checkpoint")
     parser.add_argument("--num-samples", type=int, default=5, help="Number of samples to generate captions for")
     parser.add_argument("--temperature", type=float, default=1.0, help="Sampling temperature (higher = more diverse)")
     parser.add_argument("--save-dir", type=str, help="Directory to save visualizations")
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size for processing")
-    parser.add_argument("--save-weights", action="store_true", help="Save model weights separately")
+    parser.add_argument("--save-weights", action="store_true", help="Save current model weights")
     parser.add_argument("--weights-dir", type=str, default="saved_weights", help="Directory to save model weights")
     args = parser.parse_args()
     
@@ -136,12 +136,23 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
-    # Load model
-    model = load_model(args.checkpoint, device)
+    # Initialize model
+    print("\nInitializing model...")
+    model = Decoder().to(device)
+    
+    # Load checkpoint if provided
+    if args.checkpoint:
+        model = load_model(args.checkpoint, device)
     
     # Save weights if requested
     if args.save_weights:
-        save_weights(model, args.weights_dir)
+        weights_path = save_weights(model, args.weights_dir)
+        if not args.checkpoint:  # If no checkpoint was loaded, use the saved weights
+            args.checkpoint = weights_path
+    
+    # Ensure we have weights to use
+    if not args.checkpoint and not args.save_weights:
+        raise ValueError("Either --checkpoint or --save-weights must be provided")
     
     # Create save directory if needed
     if args.save_dir:
