@@ -31,7 +31,7 @@ class Logger:
             print(f"{key}: {value}")
         print("\n")
 
-    def log_training_step(self, loss, epoch, batch_idx, phase="train", global_step=None):
+    def log_training_step(self, loss, epoch, batch_idx, optimizer = None, phase="train", global_step=None):
         """Log metrics for a single training/validation step.
         
         Args:
@@ -62,7 +62,7 @@ class Logger:
             'epoch': epoch
         }
 
-    def log_epoch_metrics(self, train_loss, val_loss, epoch):
+    def log_epoch_metrics(self, train_loss, val_loss, epoch, optimizer=None):
         """Log metrics at the end of each epoch."""
         print(f"\nEpoch {epoch} Summary:")
         print(f"Average Training Loss: {train_loss:.4f}")

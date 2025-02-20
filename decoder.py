@@ -34,12 +34,19 @@ class ResidualAttentionBlock(nn.Module):
         
         # Handle attention mask for PyTorch's MultiheadAttention
         if attention_mask is not None:
-            # Convert mask to float and proper format for attn_mask
-            attention_mask = attention_mask.float()
-            attention_mask = attention_mask.masked_fill(attention_mask == 0, float('-inf'))
-            attention_mask = attention_mask.masked_fill(attention_mask == 1, 0.0)
+            # Convert to key_padding_mask format (batch_size, seq_length)
+            # True means position is masked, False means position is attended to
+            key_padding_mask = (attention_mask == 0)
+        else:
+            key_padding_mask = None
         
-        attn_out, _ = self.attn(x, x, x, attn_mask=attention_mask, need_weights=False)
+        attn_out, _ = self.attn(
+            query=x,
+            key=x,
+            value=x,
+            key_padding_mask=key_padding_mask,
+            need_weights=False
+        )
         x = residual + attn_out
         
         # FF with residual
@@ -137,16 +144,14 @@ class Decoder(nn.Module):
         else:
             attention_mask = torch.ones((batch_size, seq_length_with_image), device=input_ids.device)
         
-        # Create causal attention mask
+        # Apply causal masking to attention mask
         causal = self.causal_mask[:seq_length_with_image, :seq_length_with_image]
-        # Create attention mask that combines padding and causality
-        # Shape will be [batch_size, seq_length_with_image, seq_length_with_image]
-        mask = attention_mask.unsqueeze(1).expand(-1, seq_length_with_image, -1)
-        mask = mask * causal.unsqueeze(0)
+        attention_mask = attention_mask.unsqueeze(1) * causal.unsqueeze(0)
+        attention_mask = attention_mask.squeeze(1)  # [batch_size, seq_length_with_image]
         
         # Process through transformer layers
         for layer in self.layers:
-            sequence = layer(sequence, attention_mask=mask)
+            sequence = layer(sequence, attention_mask=attention_mask)
         
         # Final normalization
         sequence = self.final_norm(sequence)
