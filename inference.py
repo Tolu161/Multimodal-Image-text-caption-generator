@@ -41,6 +41,19 @@ def generate_caption(model, image_embedding, processor, max_length=77, min_lengt
     model.eval()
     
     with torch.no_grad():
+        print(f"\nInitial image_embedding shape: {image_embedding.shape}")
+        
+        # Version 1: Simple shape handling (currently using this)
+        # Ensure image_embedding has correct shape [batch_size, hidden_size]
+        if len(image_embedding.shape) == 3:  # [1, 1, hidden_size]
+            print("Case 1: Squeezing dimension 1")
+            image_embedding = image_embedding.squeeze(1)  # Remove middle dimension
+        elif len(image_embedding.shape) == 1:  # [hidden_size]
+            print("Case 2: Adding batch dimension")
+            image_embedding = image_embedding.unsqueeze(0)  # Add batch dimension
+            
+        print(f"Final image_embedding shape: {image_embedding.shape}")
+            
         # Start with empty token sequence
         input_ids = torch.zeros((1, 1), dtype=torch.long, device=image_embedding.device)
         
@@ -53,10 +66,10 @@ def generate_caption(model, image_embedding, processor, max_length=77, min_lengt
         
         for i in range(max_length - 1):
             # Version 1: Simple forward pass (currently using this)
-            log_probs = model(image_embedding.unsqueeze(0), input_ids, attention_mask)  # Let model handle mask
+            log_probs = model(image_embedding, input_ids, attention_mask)
             
-            # Version 2: Complex attention handling (commented out for now)
-            # log_probs = model(image_embedding, input_ids, attention_mask)
+            # Version 2: Complex forward pass (commented out for now)
+            # log_probs = model(image_embedding.unsqueeze(0), input_ids, attention_mask)
             
             next_token_logits = log_probs[:, -1, :] / temperature
             
@@ -76,7 +89,7 @@ def generate_caption(model, image_embedding, processor, max_length=77, min_lengt
             input_ids = torch.cat([input_ids, next_token.unsqueeze(0).unsqueeze(0)], dim=1)
             
             # Version 1: Simple mask update (currently using this)
-            attention_mask = torch.ones_like(input_ids)  # Simple mask, let model handle attention pattern
+            attention_mask = torch.ones_like(input_ids)
             
             # Version 2: Complex mask update (commented out for now)
             # seq_length = input_ids.size(1) + 1  # +1 for image token
@@ -189,13 +202,15 @@ def main():
             
             # Get image and embeddings
             image = batch["image"][0]  # Get first image from batch
-            image_embeddings = batch["image_embedding"][0].unsqueeze(0)  # [1, 512]
+            print(f"\nBatch image_embedding shape: {batch['image_embedding'].shape}")
+            image_embeddings = batch["image_embedding"][0]  # Remove batch dimension
+            print(f"Selected image_embedding shape: {image_embeddings.shape}")
             true_caption = batch["caption"][0]
             
             # Generate caption
             generated_caption = generate_caption(
                 model, 
-                image_embeddings, 
+                image_embeddings,  # Pass without extra unsqueeze
                 processor,
                 temperature=args.temperature
             )
