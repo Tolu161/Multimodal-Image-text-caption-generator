@@ -29,25 +29,21 @@ class ResidualAttentionBlock(nn.Module):
             f"Input hidden size {hidden_size} doesn't match layer's d_model {self.d_model}"
         
         if attention_mask is not None:
-            expected_mask_shape = (batch_size, seq_length, seq_length)
-            assert attention_mask.size() == expected_mask_shape, \
-                f"Attention mask should have shape {expected_mask_shape}, got {attention_mask.size()}"
+            # PyTorch expects attention_mask to be additive (0 for attention, -inf for no attention)
+            attention_mask = attention_mask.float()
+            attention_mask = attention_mask.masked_fill(attention_mask == 0, float('-inf'))
+            attention_mask = attention_mask.masked_fill(attention_mask == 1, 0.0)
         
         # Attention with residual
         residual = x
         x = self.attn_norm(x)
-        # Use attention mask directly (should be float: 1.0 for keep, 0.0 for mask)
         attn_out, _ = self.attn(x, x, x, attn_mask=attention_mask, need_weights=False)
         x = residual + attn_out
-        assert x.size() == (batch_size, seq_length, self.d_model), \
-            f"Attention output shape mismatch: expected {(batch_size, seq_length, self.d_model)}, got {x.size()}"
         
         # FF with residual
         residual = x
         x = self.ff_norm(x)
         x = residual + self.ff(x)
-        assert x.size() == (batch_size, seq_length, self.d_model), \
-            f"FF output shape mismatch: expected {(batch_size, seq_length, self.d_model)}, got {x.size()}"
         
         return x
 
@@ -141,33 +137,26 @@ class Decoder(nn.Module):
         assert sequence.size() == (batch_size, seq_length_with_image, self.hidden_size), \
             f"Sequence shape mismatch after concatenation: expected ({batch_size}, {seq_length_with_image}, {self.hidden_size}), got {sequence.size()}"
         
-        # Create causal mask (convert to float for proper masking)
-        causal_mask = self.causal_mask[:seq_length_with_image, :seq_length_with_image].float()
-        assert causal_mask.size() == (seq_length_with_image, seq_length_with_image), \
-            f"Causal mask shape mismatch: expected ({seq_length_with_image}, {seq_length_with_image}), got {causal_mask.size()}"
+        # Create causal mask for the sequence including image token
+        causal_mask = self.causal_mask[:seq_length_with_image, :seq_length_with_image].unsqueeze(0)
+        causal_mask = causal_mask.expand(batch_size, -1, -1)
         
         if attention_mask is not None:
             # Add attention for image token (keep as float)
             image_attention = torch.ones((batch_size, 1), device=attention_mask.device)
             attention_mask = torch.cat([image_attention, attention_mask], dim=1)
-            assert attention_mask.size() == (batch_size, seq_length_with_image), \
-                f"Extended attention mask shape mismatch: expected ({batch_size}, {seq_length_with_image}), got {attention_mask.size()}"
             
             # Create combined mask (keeping float values)
-            mask = causal_mask.unsqueeze(0) * attention_mask.unsqueeze(1)
+            mask = causal_mask * attention_mask.unsqueeze(1)
         else:
-            # Just use causal mask
-            mask = causal_mask.unsqueeze(0).expand(batch_size, -1, -1)
+            mask = causal_mask
         
         assert mask.size() == (batch_size, seq_length_with_image, seq_length_with_image), \
             f"Final attention mask shape mismatch: expected ({batch_size}, {seq_length_with_image}, {seq_length_with_image}), got {mask.size()}"
         
-        # Convert to proper format for attention (1.0 for keep, 0.0 for mask)
-        attention_weights = mask
-        
         # Process through transformer layers
         for i, layer in enumerate(self.layers):
-            sequence = layer(sequence, attention_mask=attention_weights)
+            sequence = layer(sequence, attention_mask=mask)
             assert sequence.size() == (batch_size, seq_length_with_image, self.hidden_size), \
                 f"Layer {i} output shape mismatch: expected ({batch_size}, {seq_length_with_image}, {self.hidden_size}), got {sequence.size()}"
         

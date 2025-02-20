@@ -42,70 +42,61 @@ def generate_caption(model, image_embedding, processor, max_length=77, min_lengt
     
     with torch.no_grad():
         try:
-            print(f"\nInitial image_embedding shape: {image_embedding.shape}")
-            
             # Ensure image_embedding has shape [batch_size, hidden_size]
             if len(image_embedding.shape) == 3:  # [1, 1, hidden_size]
-                image_embedding = image_embedding.squeeze()  # Remove extra dimensions
-                if len(image_embedding.shape) == 1:
-                    image_embedding = image_embedding.unsqueeze(0)  # Add batch dimension
-            elif len(image_embedding.shape) == 1:  # [hidden_size]
-                image_embedding = image_embedding.unsqueeze(0)  # Add batch dimension
-                
-            print(f"Final image_embedding shape: {image_embedding.shape}")
-            assert len(image_embedding.shape) == 2, f"Expected 2D tensor, got shape {image_embedding.shape}"
-            assert image_embedding.size(1) == model.hidden_size, \
-                f"Expected hidden size {model.hidden_size}, got {image_embedding.size(1)}"
-                
+                image_embedding = image_embedding.squeeze()
+            if len(image_embedding.shape) == 1:  # [hidden_size]
+                image_embedding = image_embedding.unsqueeze(0)
+            
             # Start with BOS token
             input_ids = torch.tensor([[processor.tokenizer.bos_token_id]], dtype=torch.long, device=image_embedding.device)
-            
-            # Create initial attention mask
-            seq_length = input_ids.size(1)
-            attention_mask = torch.ones((1, seq_length), dtype=torch.float, device=image_embedding.device)
+            attention_mask = torch.ones_like(input_ids, dtype=torch.float)
             
             generated_tokens = []
+            eos_token_id = processor.tokenizer.eos_token_id
             
             for i in range(max_length - 1):
-                try:
-                    # Forward pass
-                    log_probs = model(image_embedding, input_ids, attention_mask)
-                    next_token_logits = log_probs[:, -1, :] / temperature
-                    
-                    # Prevent EOS before min_length
-                    if i < min_length:
-                        next_token_logits[0, processor.tokenizer.eos_token_id] = float('-inf')
-                    
-                    # Sample from the distribution for more diverse captions
-                    next_token_probs = torch.softmax(next_token_logits, dim=-1)
-                    next_token = torch.multinomial(next_token_probs, num_samples=1)[0]
-                    
-                    # Stop if EOS token (after min_length)
-                    if next_token.item() == processor.tokenizer.eos_token_id and i >= min_length:
-                        break
-                        
+                # Create causal attention mask
+                seq_length = input_ids.size(1)
+                causal_mask = torch.tril(torch.ones((1, seq_length, seq_length), device=input_ids.device))
+                
+                # Forward pass
+                log_probs = model(image_embedding, input_ids, attention_mask)
+                next_token_logits = log_probs[:, -1, :] / temperature
+                
+                # Prevent EOS before min_length
+                if i < min_length:
+                    next_token_logits[0, eos_token_id] = float('-inf')
+                
+                # Sample from the filtered distribution
+                next_token_probs = torch.softmax(next_token_logits, dim=-1)
+                next_token = torch.multinomial(next_token_probs, num_samples=1)[0]
+                
+                # If we get EOS token and we're past min_length, stop
+                if next_token.item() == eos_token_id and i >= min_length:
                     generated_tokens.append(next_token.item())
-                    
-                    # Add token to sequence
-                    input_ids = torch.cat([input_ids, next_token.unsqueeze(0).unsqueeze(0)], dim=1)
-                    
-                    # Update attention mask
-                    seq_length = input_ids.size(1)
-                    attention_mask = torch.ones((1, seq_length), dtype=torch.float, device=image_embedding.device)
-                    
-                except RuntimeError as e:
-                    print(f"Error during generation step {i}: {str(e)}")
                     break
+                
+                # Add the token to our sequence
+                generated_tokens.append(next_token.item())
+                input_ids = torch.cat([input_ids, next_token.unsqueeze(0).unsqueeze(0)], dim=1)
+                attention_mask = torch.ones_like(input_ids, dtype=torch.float)
+                
+                # Print progress for debugging
+                if i % 10 == 0:
+                    print(f"Generated {i} tokens: {processor.tokenizer.decode(generated_tokens)}")
             
-            # Decode caption, handling empty case
+            # Decode the sequence
             if not generated_tokens:
                 return "Failed to generate caption"
-                
-            # Add BOS token to generated tokens for proper decoding
-            all_tokens = [processor.tokenizer.bos_token_id] + generated_tokens
             
-            # Decode caption
+            # Include BOS token in decoding
+            all_tokens = [processor.tokenizer.bos_token_id] + generated_tokens
             caption = processor.tokenizer.decode(all_tokens, skip_special_tokens=True)
+            
+            # Print final caption for debugging
+            print(f"Final generated caption: {caption}")
+            
             return caption.strip() if caption.strip() else "Failed to generate meaningful caption"
             
         except Exception as e:
