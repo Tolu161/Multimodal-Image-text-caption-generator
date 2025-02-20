@@ -134,22 +134,32 @@ def main(weights_path=None, save_weights=True):
         if i >= num_samples:
             break
             
-        image_embeddings = batch["image_embedding"][0]  # Remove batch dimension
+        # Get image and embeddings
+        image = batch["image"]
+        image_embeddings = batch["image_embedding"][0]  # [512]
+        image_embeddings = image_embeddings.unsqueeze(0)  # [1, 512]
+        
+        # Get true caption
         true_caption = processor.tokenizer.decode(
             batch["input_ids"][0],
             skip_special_tokens=True
         )
         
+        # Generate caption
         generated_caption = generate_caption(model, image_embeddings, processor)
         
         print(f"\nImage {i+1}:")
         print(f"True caption: {true_caption}")
         print(f"Generated caption: {generated_caption}")
+        
+        # Display results
+        display_results(image[0], generated_caption, true_caption)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--weights", type=str, help="Path to model weights")
     parser.add_argument("--save-weights", action="store_true", help="Save current weights before inference")
+    parser.add_argument("--num-samples", type=int, default=5, help="Number of samples to generate captions for")
     args = parser.parse_args()
     
     main(weights_path=args.weights, save_weights=args.save_weights)
