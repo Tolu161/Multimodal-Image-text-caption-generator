@@ -56,53 +56,50 @@ class Flickr30kDataset(Dataset):  # Now inherits from torch.utils.data.Dataset
         item = self.dataset[idx]
         image = item["image"]
         
-        # Select caption based on split
-        captions = item["caption"][0]
+        # Get captions - Flickr30k provides 5 captions per image
+        captions = item["caption"]
+        
         if self.split == "train":
             # Random caption for training
             caption = captions[torch.randint(0, len(captions), (1,)).item()]
         else:
             # First caption for validation/testing (deterministic)
             caption = captions[0]
+            
+        # print(f"Selected caption: {caption}")  # Debug print commented out
         
         # Process image
         image_inputs = self.processor(images=image, return_tensors="pt").to(self.device)
         with torch.no_grad():
-            # Get image embeddings [1, embed_dim] -> [embed_dim]
-            image_embeddings = self.model.get_image_features(**image_inputs).squeeze(0)  # Remove batch dimension
+            image_embeddings = self.model.get_image_features(**image_inputs).squeeze(0)
         
-        # Process text - manually handle padding
+        # Process text
         text_tokens = self.processor.tokenizer.encode(
             caption,
             add_special_tokens=True,
             truncation=True,
             max_length=self.max_length,
-            padding="max_length",  # Ensure fixed length
-            return_tensors=None  # Return list
+            padding="max_length",
+            return_tensors=None
         )
         
-        # Convert to tensors and move to device - single item, no batch dimension
-        input_ids = torch.tensor(text_tokens, dtype=torch.long, device=self.device)  # [seq_len]
-        attention_mask = (input_ids != self.pad_token_id).float()  # [seq_len]
+        # Convert to tensors
+        input_ids = torch.tensor(text_tokens, dtype=torch.long, device=self.device)
+        attention_mask = (input_ids != self.pad_token_id).float()
         
-        # Create labels (shifted input_ids)
-        labels = input_ids.clone()  # [seq_len]
-        labels[:-1] = input_ids[1:]  # shift left by 1
-        labels[-1] = -100  # Ignore last prediction
-        labels[input_ids == self.pad_token_id] = -100  # Ignore padding tokens
-        
-        # Verify shapes
-        assert input_ids.shape[0] == self.max_length, f"input_ids shape {input_ids.shape} != {self.max_length}"
-        assert attention_mask.shape[0] == self.max_length, f"attention_mask shape {attention_mask.shape} != {self.max_length}"
-        assert labels.shape[0] == self.max_length, f"labels shape {labels.shape} != {self.max_length}"
+        # Create labels
+        labels = input_ids.clone()
+        labels[:-1] = input_ids[1:]
+        labels[-1] = -100
+        labels[input_ids == self.pad_token_id] = -100
         
         return {
-            "image": image,  # Original PIL image
-            "image_embedding": image_embeddings,  # [embed_dim]
-            "input_ids": input_ids,  # [max_length]
-            "attention_mask": attention_mask,  # [max_length]
-            "labels": labels,  # [max_length]
-            "caption": caption  # Original caption string
+            "image": image,
+            "image_embedding": image_embeddings,
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "labels": labels,
+            "caption": caption
         }
 
 
@@ -113,36 +110,28 @@ class Flickr30kDataset(Dataset):  # Now inherits from torch.utils.data.Dataset
 
 
 def load_flikr_dataset(device, split="train", batch_size=32, train_ratio=0.8, seed=42):
-    # Load dataset
-    f_dataset = load_dataset("nlphuji/flickr30k", split='test')
-    #dataset = dataset.select(range(500))  # Load only 500 samples
-
-    # Calculate split sizes
-    total_size = len(f_dataset)
-    train_size = int(total_size * train_ratio)
-
-    # Split dataset
-    f_dataset = f_dataset.shuffle(seed=seed)
-    train_dataset = f_dataset.select(range(train_size))
-    val_dataset = f_dataset.select(range(train_size, total_size))
-
-    # Select appropriate split
-    dataset = train_dataset if split == "train" else val_dataset
+    """Load and prepare the Flickr30k dataset."""
+    # Load dataset with appropriate split
+    if split == "train":
+        f_dataset = load_dataset("nlphuji/flickr30k", split="train")
+    else:
+        f_dataset = load_dataset("nlphuji/flickr30k", split="validation")
+    
+    print(f"\nLoaded {len(f_dataset)} samples for {split} split")
+    
     # Load CLIP model and processor
     model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
     processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-    clip_tokeniser = processor.tokenizer
-    # Device setup
-    #device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    #model.to(device)
-    # Create dataset instance with split parameter
+    
+    # Create dataset instance
     flickr_dataset = Flickr30kDataset(
-        dataset=dataset,
+        dataset=f_dataset,
         processor=processor,
         model=model,
         device=device,
-        split=split  # Pass the split parameter
+        split=split
     )
+    
     return DataLoader(
         flickr_dataset,
         batch_size=batch_size,
@@ -157,7 +146,10 @@ if __name__ == "__main__":
         if torch.backends.mps.is_available()
         else "cuda" if torch.cuda.is_available() else "cpu"
     )
+    print(f"\nUsing device: {device}")
 
+    """
+    # Original test code (commented out)
     # Test single item first
     dataloader = load_flikr_dataset(device, batch_size=1)
     single_batch = next(iter(dataloader))
@@ -175,6 +167,57 @@ if __name__ == "__main__":
     print("Input IDs:", batch["input_ids"].shape)  # [32, 77]
     print("Attention Mask:", batch["attention_mask"].shape)  # [32, 77]
     print("Labels:", batch["labels"].shape)  # [32, 77]
+    """
+
+    # New detailed verification code
+    print("\nRunning detailed dataset verification...")
+    for split in ["train", "validation"]:
+        print(f"\n{'='*50}")
+        print(f"Testing {split} split:")
+        print('='*50)
+        
+        # Load dataset directly to inspect raw data
+        raw_dataset = load_dataset("nlphuji/flickr30k", split=split)
+        print(f"\nRaw dataset size: {len(raw_dataset)}")
+        
+        # Print first few raw examples
+        print("\nFirst 3 raw examples:")
+        for i in range(min(3, len(raw_dataset))):
+            item = raw_dataset[i]
+            print(f"\nImage {i+1}:")
+            print(f"Number of captions: {len(item['caption'])}")
+            print("Captions:")
+            for j, cap in enumerate(item['caption'], 1):
+                print(f"{j}. {cap}")
+        
+        # Test dataloader
+        print(f"\nTesting dataloader for {split} split...")
+        dataloader = load_flikr_dataset(device, split=split, batch_size=2)
+        batch = next(iter(dataloader))
+        
+        print("\nDataloader batch contents:")
+        print(f"Batch size: {len(batch['caption'])}")
+        print("\nShapes:")
+        print(f"Image Embeddings: {batch['image_embedding'].shape}")
+        print(f"Input IDs: {batch['input_ids'].shape}")
+        print(f"Attention Mask: {batch['attention_mask'].shape}")
+        print(f"Labels: {batch['labels'].shape}")
+        
+        print("\nCaptions from batch:")
+        for i, cap in enumerate(batch['caption'], 1):
+            print(f"{i}. {cap}")
+            
+        # Verify tokenization
+        print("\nVerifying tokenization:")
+        processor = dataloader.dataset.processor
+        for i, cap in enumerate(batch['caption'][:2]):  # Check first two captions
+            print(f"\nCaption {i+1}:")
+            print("Original:", cap)
+            # Decode the input_ids to verify tokenization is correct
+            decoded = processor.tokenizer.decode(batch['input_ids'][i], skip_special_tokens=True)
+            print("Decoded from tokens:", decoded)
+            
+        print("\nVerification complete for", split)
 
 
 
