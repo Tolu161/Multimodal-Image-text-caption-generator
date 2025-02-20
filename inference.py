@@ -60,8 +60,9 @@ def generate_caption(model, image_embedding, processor, max_length=77, min_lengt
             # Start with BOS token
             input_ids = torch.tensor([[processor.tokenizer.bos_token_id]], dtype=torch.long, device=image_embedding.device)
             
-            # Initialize attention mask to match input_ids shape (batch_size, seq_length)
-            attention_mask = torch.ones((1, 1), dtype=torch.float, device=image_embedding.device)
+            # Create initial attention mask
+            seq_length = input_ids.size(1)
+            attention_mask = torch.ones((1, seq_length), dtype=torch.float, device=image_embedding.device)
             
             generated_tokens = []
             
@@ -88,8 +89,9 @@ def generate_caption(model, image_embedding, processor, max_length=77, min_lengt
                     # Add token to sequence
                     input_ids = torch.cat([input_ids, next_token.unsqueeze(0).unsqueeze(0)], dim=1)
                     
-                    # Update attention mask to match input_ids shape (batch_size, seq_length)
-                    attention_mask = torch.ones((1, input_ids.size(1)), dtype=torch.float, device=image_embedding.device)
+                    # Update attention mask
+                    seq_length = input_ids.size(1)
+                    attention_mask = torch.ones((1, seq_length), dtype=torch.float, device=image_embedding.device)
                     
                 except RuntimeError as e:
                     print(f"Error during generation step {i}: {str(e)}")
