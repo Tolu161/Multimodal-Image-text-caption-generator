@@ -52,7 +52,7 @@ class ResidualAttentionBlock(nn.Module):
         return x
 
 class Decoder(nn.Module):
-    def __init__(self, n_head=4, n_inner=1024, clip_embedding_dim=512, max_seq_length=77, dropout=0.1, vocab_size=49408, n_layers=2):
+    def __init__(self, n_head=8, n_inner=2048, clip_embedding_dim=512, max_seq_length=77, dropout=0.1, vocab_size=49408, n_layers=4):
         super().__init__()
         self.hidden_size = clip_embedding_dim
         

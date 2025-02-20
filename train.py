@@ -48,18 +48,19 @@ def compute_loss(batch, model, device):
 
 def train(
     device,
-    num_heads=1,
-    n_inner=1024,
+    num_heads=8,
+    n_inner=2048,
     clip_embedding_dim=512,
     max_seq_length=77,
     dropout=0.1,
-    num_epochs=1,
-    lr=1e-4,
+    num_epochs=20,
+    lr=1e-3,
     weight_decay=0.01,
     use_wandb=False,
     max_batches=0,
-    batch_size=32,
+    batch_size=64,
     grad_clip=1.0,
+    warmup_steps=1000,
 ):
     set_seed()
     
@@ -76,6 +77,7 @@ def train(
         "num_epochs": num_epochs,
         "batch_size": batch_size,
         "grad_clip": grad_clip,
+        "warmup_steps": warmup_steps,
     })
 
     # Load datasets
