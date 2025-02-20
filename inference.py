@@ -48,7 +48,7 @@ def generate_caption(model, image_embedding, processor, max_length=77, min_lengt
             if len(image_embedding.shape) == 3:  # [1, 1, hidden_size]
                 image_embedding = image_embedding.squeeze()  # Remove extra dimensions
                 if len(image_embedding.shape) == 1:
-                    image_embedding = image_embedding.unsqueeze(0)  # Add batch dimension back
+                    image_embedding = image_embedding.unsqueeze(0)  # Add batch dimension
             elif len(image_embedding.shape) == 1:  # [hidden_size]
                 image_embedding = image_embedding.unsqueeze(0)  # Add batch dimension
                 
@@ -60,15 +60,20 @@ def generate_caption(model, image_embedding, processor, max_length=77, min_lengt
             # Start with empty token sequence
             input_ids = torch.zeros((1, 1), dtype=torch.long, device=image_embedding.device)
             
-            # Simple padding mask for input tokens
-            padding_mask = torch.ones_like(input_ids, dtype=torch.bool)
+            # Create initial attention mask for the first token
+            batch_size = 1
+            n_heads = model.layers[0].n_head  # Get number of attention heads from model
+            seq_length = 2  # Image token + first text token
+            
+            # Initialize attention mask with proper shape for multiple heads
+            attention_mask = torch.ones((batch_size, seq_length), dtype=torch.bool, device=image_embedding.device)
             
             generated_tokens = []
             
             for i in range(max_length - 1):
                 try:
-                    # Forward pass without explicit attention mask (let model handle it)
-                    log_probs = model(image_embedding, input_ids, padding_mask)
+                    # Forward pass
+                    log_probs = model(image_embedding, input_ids, attention_mask)
                     next_token_logits = log_probs[:, -1, :] / temperature
                     
                     # Prevent EOS before min_length
@@ -87,7 +92,10 @@ def generate_caption(model, image_embedding, processor, max_length=77, min_lengt
                     
                     # Add token to sequence
                     input_ids = torch.cat([input_ids, next_token.unsqueeze(0).unsqueeze(0)], dim=1)
-                    padding_mask = torch.ones_like(input_ids, dtype=torch.bool)
+                    
+                    # Update attention mask for new sequence length
+                    seq_length = input_ids.size(1) + 1  # Add 1 for image token
+                    attention_mask = torch.ones((batch_size, seq_length), dtype=torch.bool, device=image_embedding.device)
                     
                 except RuntimeError as e:
                     print(f"Error during generation step {i}: {str(e)}")
