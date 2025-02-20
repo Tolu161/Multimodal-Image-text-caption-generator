@@ -27,6 +27,25 @@ def load_model(checkpoint_path, device):
     model.load_state_dict(checkpoint["model_state_dict"])
     return model
 
+def save_current_weights(model, save_dir="saved_weights"):
+    """Save the current model weights."""
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, "model_weights.pt")
+    
+    # Save only the model state dict
+    torch.save(model.state_dict(), save_path)
+    print(f"\nModel weights saved to: {save_path}")
+    return save_path
+
+def load_weights(model, weights_path):
+    """Load weights into the model."""
+    if os.path.exists(weights_path):
+        print(f"\nLoading weights from: {weights_path}")
+        model.load_state_dict(torch.load(weights_path))
+        print("Weights loaded successfully")
+    else:
+        raise FileNotFoundError(f"No weights file found at {weights_path}")
+
 def generate_caption(model, image_embedding, processor, max_length=77, min_length=5):
     """Generate a caption for an image."""
     model.eval()
@@ -84,59 +103,53 @@ def display_results(image, generated_caption, original_caption):
     plt.subplots_adjust(top=0.85)
     plt.show()
 
-if __name__ == "__main__":
+def main(weights_path=None, save_weights=True):
     # Set up device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
-    # Parse arguments
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--checkpoint",
-        type=str,
-        required=True,
-        help="Path to model checkpoint"
-    )
-    parser.add_argument(
-        "--image-idx",
-        type=int,
-        default=0,
-        help="Index of validation image to caption"
-    )
-    args = parser.parse_args()
-    
-    # Load model
-    model = load_model(args.checkpoint, device)
-    
-    # Load CLIP processor
-    processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-    
-    # Get validation dataloader
+    # Load validation dataset (for testing)
+    print("\nLoading validation dataset...")
     val_dataloader = load_flikr_dataset(device, split="val", batch_size=1)
     
-    # Get specified image
+    # Initialize model
+    print("\nInitializing model...")
+    model = Decoder().to(device)
+    
+    # Save current weights if requested
+    if save_weights and weights_path is None:
+        weights_path = save_current_weights(model)
+    
+    # Load weights if path is provided
+    if weights_path:
+        load_weights(model, weights_path)
+    
+    # Get processor from dataloader for tokenization
+    processor = val_dataloader.dataset.processor
+    
+    # Generate captions for a few validation images
+    print("\nGenerating captions...")
+    num_samples = 5
     for i, batch in enumerate(val_dataloader):
-        if i == args.image_idx:
+        if i >= num_samples:
             break
-    else:
-        raise ValueError(f"Image index {args.image_idx} out of range")
+            
+        image_embeddings = batch["image_embedding"][0]  # Remove batch dimension
+        true_caption = processor.tokenizer.decode(
+            batch["input_ids"][0],
+            skip_special_tokens=True
+        )
+        
+        generated_caption = generate_caption(model, image_embeddings, processor)
+        
+        print(f"\nImage {i+1}:")
+        print(f"True caption: {true_caption}")
+        print(f"Generated caption: {generated_caption}")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--weights", type=str, help="Path to model weights")
+    parser.add_argument("--save-weights", action="store_true", help="Save current weights before inference")
+    args = parser.parse_args()
     
-    # Generate caption
-    image = batch["image"]
-    original_caption = batch["caption"][0]
-    image_embedding = batch["image_embedding"].to(device)
-    
-    generated_caption = generate_caption(
-        model,
-        image_embedding,
-        processor,
-        max_length=77,
-        min_length=5
-    )
-    
-    # Print results
-    print("\nGenerated caption:", generated_caption)
-    print("Original caption:", original_caption)
-    
-    # Display results
-    display_results(image, generated_caption, original_caption)
+    main(weights_path=args.weights, save_weights=args.save_weights)
