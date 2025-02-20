@@ -43,11 +43,21 @@ def generate_caption(model, image_embedding, processor, max_length=77, min_lengt
     with torch.no_grad():
         # Start with empty token sequence
         input_ids = torch.zeros((1, 1), dtype=torch.long, device=image_embedding.device)
-        attention_mask = torch.ones_like(input_ids)
+        
+        # Version 1: Simple attention mask (currently using this)
+        attention_mask = torch.ones_like(input_ids)  # [1, 1]
+        
+        # Version 2: Complex attention mask (commented out for now)
+        # attention_mask = torch.ones((1, 1, 1), dtype=torch.float, device=image_embedding.device)
+        # attention_mask = attention_mask.expand(-1, -1, 2)  # Expand for image token
         
         for i in range(max_length - 1):
-            # Get model predictions
-            log_probs = model(image_embedding, input_ids, attention_mask)
+            # Version 1: Simple forward pass (currently using this)
+            log_probs = model(image_embedding.unsqueeze(0), input_ids, attention_mask)  # Let model handle mask
+            
+            # Version 2: Complex attention handling (commented out for now)
+            # log_probs = model(image_embedding, input_ids, attention_mask)
+            
             next_token_logits = log_probs[:, -1, :] / temperature
             
             # Prevent EOS before min_length
@@ -64,7 +74,13 @@ def generate_caption(model, image_embedding, processor, max_length=77, min_lengt
                 
             # Add token to sequence
             input_ids = torch.cat([input_ids, next_token.unsqueeze(0).unsqueeze(0)], dim=1)
-            attention_mask = torch.ones_like(input_ids)
+            
+            # Version 1: Simple mask update (currently using this)
+            attention_mask = torch.ones_like(input_ids)  # Simple mask, let model handle attention pattern
+            
+            # Version 2: Complex mask update (commented out for now)
+            # seq_length = input_ids.size(1) + 1  # +1 for image token
+            # attention_mask = torch.ones((1, seq_length, seq_length), dtype=torch.float, device=image_embedding.device)
         
         # Decode caption
         caption = processor.tokenizer.decode(input_ids[0], skip_special_tokens=True)
