@@ -57,10 +57,8 @@ def generate_caption(model, image_embedding, processor, max_length=77, min_lengt
             assert image_embedding.size(1) == model.hidden_size, \
                 f"Expected hidden size {model.hidden_size}, got {image_embedding.size(1)}"
                 
-            # Start with empty token sequence
-            input_ids = torch.zeros((1, 1), dtype=torch.long, device=image_embedding.device)
-            
-            # Initialize attention mask to match input_ids shape
+            # Start with BOS token
+            input_ids = torch.tensor([[processor.tokenizer.bos_token_id]], dtype=torch.long, device=image_embedding.device)
             attention_mask = torch.ones_like(input_ids, dtype=torch.float)
             
             generated_tokens = []
@@ -80,15 +78,13 @@ def generate_caption(model, image_embedding, processor, max_length=77, min_lengt
                     next_token = torch.multinomial(next_token_probs, num_samples=1)[0]
                     
                     # Stop if EOS token (after min_length)
-                    if next_token.item() == processor.tokenizer.eos_token_id:
+                    if next_token.item() == processor.tokenizer.eos_token_id and i >= min_length:
                         break
                         
                     generated_tokens.append(next_token.item())
                     
                     # Add token to sequence
                     input_ids = torch.cat([input_ids, next_token.unsqueeze(0).unsqueeze(0)], dim=1)
-                    
-                    # Update attention mask to match input_ids shape
                     attention_mask = torch.ones_like(input_ids, dtype=torch.float)
                     
                 except RuntimeError as e:
@@ -99,9 +95,12 @@ def generate_caption(model, image_embedding, processor, max_length=77, min_lengt
             if not generated_tokens:
                 return "Failed to generate caption"
                 
+            # Add BOS token to generated tokens for proper decoding
+            all_tokens = [processor.tokenizer.bos_token_id] + generated_tokens
+            
             # Decode caption
-            caption = processor.tokenizer.decode(generated_tokens, skip_special_tokens=True)
-            return caption if caption.strip() else "Failed to generate meaningful caption"
+            caption = processor.tokenizer.decode(all_tokens, skip_special_tokens=True)
+            return caption.strip() if caption.strip() else "Failed to generate meaningful caption"
             
         except Exception as e:
             print(f"Error in caption generation: {str(e)}")
