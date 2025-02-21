@@ -27,6 +27,14 @@ def compute_loss(batch, model, device):
     input_ids = batch["input_ids"].to(device)  # [batch_size, seq_len]
     attention_mask = batch["attention_mask"].to(device)  # [batch_size, seq_len]
     labels = batch["labels"].to(device)  # [batch_size, seq_len]
+    
+    # Debug: Print shapes
+    print(f"image_embeddings shape: {image_embeddings.shape}")
+    print(f"input_ids shape: {input_ids.shape}")
+    print(f"attention_mask shape: {attention_mask.shape}")
+    print(f"labels shape: {labels.shape}")
+
+
 
     # Get model predictions
     log_probs = model(image_embeddings, input_ids, attention_mask)  # [batch_size, seq_len, vocab_size]
