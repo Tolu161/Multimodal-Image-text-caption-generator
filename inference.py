@@ -15,16 +15,16 @@ def load_model(checkpoint_path, device):
     """Load model from checkpoint."""
     print(f"\nLoading model from {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location=device)
-    
-    # Initialize model with saved configuration
-    config = checkpoint.get('config', {
+    # Handle missing config
+    default_config = {
         'n_head': 1,
         'n_inner': 1024,
         'clip_embedding_dim': 512,
         'max_seq_length': 77,
         'dropout': 0.1
-    })
-    
+    }
+    config = checkpoint.get('config', default_config)  # Use saved config if available
+
     model = Decoder(**config).to(device)
     
     # Load state dict
@@ -169,14 +169,23 @@ def generate_and_display_batch(model, dataloader, processor, num_images=5, save_
                 save_path = None
                 if save_dir:
                     os.makedirs(save_dir, exist_ok=True)
-                    save_path = os.path.join(save_dir, f"sample_{i+1}.png")
+                    #save_path = os.path.join(save_dir, f"sample_{i+1}.png")
+                    # Define save paths for the image and visualization
+                    image_save_path = os.path.join(save_dir, f"image_{i+1}.png")
+                    visualization_save_path = os.path.join(save_dir, f"sample_{i+1}.png")
+
+
+                 # Save the original image
+                    plt.imsave(image_save_path, image.cpu().numpy())  # Make sure to convert tensor to numpy
+                    print(f"Saved original image to {image_save_path}") 
+
                 
                 # Display results
                 display_results(
                     image,
                     generated_caption,
                     original_caption,
-                    save_path=save_path
+                    save_path=visualization_save_path
                 )
                 
                 # Print comparison
