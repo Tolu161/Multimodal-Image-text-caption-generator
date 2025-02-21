@@ -9,6 +9,7 @@ from dataloader import load_flikr_dataset
 from decoder import Decoder
 
 from trainlog import Logger
+import wandb
 
 
 def set_seed(seed=42):

@@ -11,6 +11,7 @@ class Logger:
         """Initialize logger with option for wandb tracking."""
         self.use_wandb = use_wandb
         if use_wandb:
+            wandb.login()
             wandb.init(project=project_name)
         
         # Create timestamp for unique run identification
@@ -101,31 +102,38 @@ class Logger:
 
     def save_model(self, model, optimizer, epoch, train_loss, val_loss):
         """Save model checkpoint with metadata."""
-        checkpoint = {
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'train_loss': train_loss,
-            'val_loss': val_loss
-        }
-        
-        # Save locally
-        checkpoint_path = os.path.join(
-            self.checkpoint_dir, 
-            f'model_epoch_{epoch}_valloss_{val_loss:.4f}.pt'
-        )
-        torch.save(checkpoint, checkpoint_path)
-        print(f"\nModel saved to {checkpoint_path}")
-        
-        # Log to wandb if enabled
-        if self.use_wandb:
-            wandb.save(checkpoint_path)
+        try: 
+            checkpoint = {
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'train_loss': train_loss,
+                'val_loss': val_loss
+            }
+            
+            # Save locally
+            checkpoint_path = os.path.join(
+                self.checkpoint_dir, 
+                f'model_epoch_{epoch}_valloss_{val_loss:.4f}.pt'
+            )
+            torch.save(checkpoint, checkpoint_path)
+            print(f"\nModel saved to {checkpoint_path}")
+            print(f"\n✅ Model saved successfully at: {os.path.abspath(checkpoint_path)}")
+            # Log to wandb if enabled
+            if self.use_wandb:
+                wandb.save(checkpoint_path)
+            
+        except Exception as e:
+            print(f"\n❌ Error saving model: {e}")
 
-    def load_model(self, model, optimizer, checkpoint_path):
+    def load_model(self, model, optimizer, checkpoint_path, device="cuda"):
         """Load model from checkpoint."""
-        checkpoint = torch.load(checkpoint_path)
+        checkpoint = torch.load(checkpoint_path, map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+        print(f"✅ Loaded model from {checkpoint_path} (Epoch {checkpoint['epoch']})")
+
         return checkpoint['epoch'], checkpoint['train_loss'], checkpoint['val_loss']
 
     def close(self):
@@ -155,3 +163,5 @@ if __name__ == "__main__":
     
     # Close logger
     logger.close()
+
+    
