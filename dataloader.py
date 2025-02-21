@@ -1,3 +1,14 @@
+
+
+
+
+
+
+
+
+
+
+
 # Import necessary libraries
 import os
 from datasets import load_dataset
@@ -55,24 +66,20 @@ class Flickr30kDataset(Dataset):  # Now inherits from torch.utils.data.Dataset
         # Get a single item
         item = self.dataset[idx]
         image = item["image"]
-        
-        # Get captions - Flickr30k provides 5 captions per image
         captions = item["caption"]
-        
+
         if self.split == "train":
             # Random caption for training
             caption = captions[torch.randint(0, len(captions), (1,)).item()]
         else:
             # First caption for validation/testing (deterministic)
             caption = captions[0]
-            
-        # print(f"Selected caption: {caption}")  # Debug print commented out
-        
+
         # Process image
         image_inputs = self.processor(images=image, return_tensors="pt").to(self.device)
         with torch.no_grad():
             image_embeddings = self.model.get_image_features(**image_inputs).squeeze(0)
-        
+
         # Process text
         text_tokens = self.processor.tokenizer.encode(
             caption,
@@ -82,17 +89,17 @@ class Flickr30kDataset(Dataset):  # Now inherits from torch.utils.data.Dataset
             padding="max_length",
             return_tensors=None
         )
-        
+
         # Convert to tensors
         input_ids = torch.tensor(text_tokens, dtype=torch.long, device=self.device)
-        attention_mask = (input_ids != self.pad_token_id).float()
-        
+        attention_mask = (input_ids != self.pad_token_id).float()  # [seq_length]
+
         # Create labels
         labels = input_ids.clone()
         labels[:-1] = input_ids[1:]
         labels[-1] = -100
         labels[input_ids == self.pad_token_id] = -100
-        
+
         return {
             "image": image,
             "image_embedding": image_embeddings,
@@ -101,13 +108,10 @@ class Flickr30kDataset(Dataset):  # Now inherits from torch.utils.data.Dataset
             "labels": labels,
             "caption": caption
         }
-
-
-
+        
 
 # Load OpenAI API key from environment variable (secure)
 #openai.api_key = os.getenv("OPENAI_API_KEY")
-
 
 def load_flikr_dataset(device, split="train", batch_size=32, train_ratio=0.8, val_ratio=0.1, seed=42):
     """Load and prepare the Flickr30k dataset.
@@ -254,7 +258,60 @@ if __name__ == "__main__":
 
 
 
+'''
+def __getitem__(self, idx):
+        # Get a single item
+        item = self.dataset[idx]
+        image = item["image"]
+        
+        # Get captions - Flickr30k provides 5 captions per image
+        captions = item["caption"]
+        
+        if self.split == "train":
+            # Random caption for training
+            caption = captions[torch.randint(0, len(captions), (1,)).item()]
+        else:
+            # First caption for validation/testing (deterministic)
+            caption = captions[0]
+            
+        # print(f"Selected caption: {caption}")  # Debug print commented out
+        
+        # Process image
+        image_inputs = self.processor(images=image, return_tensors="pt").to(self.device)
+        with torch.no_grad():
+            image_embeddings = self.model.get_image_features(**image_inputs).squeeze(0)
+        
+        # Process text
+        text_tokens = self.processor.tokenizer.encode(
+            caption,
+            add_special_tokens=True,
+            truncation=True,
+            max_length=self.max_length,
+            padding="max_length",
+            return_tensors=None
+        )
+        
+        # Convert to tensors
+        input_ids = torch.tensor(text_tokens, dtype=torch.long, device=self.device)
+        attention_mask = (input_ids != self.pad_token_id).float()
+        
+        # Create labels
+        labels = input_ids.clone()
+        labels[:-1] = input_ids[1:]
+        labels[-1] = -100
+        labels[input_ids == self.pad_token_id] = -100
+        
+        return {
+            "image": image,
+            "image_embedding": image_embeddings,
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "labels": labels,
+            "caption": caption
+        }
 
+
+'''
 
 
 
